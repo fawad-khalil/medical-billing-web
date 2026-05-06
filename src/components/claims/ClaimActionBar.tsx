@@ -3,8 +3,11 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { ClaimStatusBadge } from './ClaimStatusBadge';
+import { SubmitToClearinghouseButton } from './SubmitToClearinghouseButton';
 import { useUpdateClaimStatus } from '@/hooks/useClaims';
+import { useScrubClaim, useGenerateEdi, useEdiFiles } from '@/hooks/useEdi';
 import type { ClaimStatus } from '@/types/claim';
+import type { ScrubResult } from '@/types/edi';
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
 
@@ -86,19 +89,42 @@ function ConfirmDialog({
 interface ClaimActionBarProps {
   claimId: string;
   status: ClaimStatus;
+  scrubErrors?: string[] | null;
 }
 
 type DialogType = 'submit' | 'void' | 'backToDraft' | null;
 
-export function ClaimActionBar({ claimId, status }: ClaimActionBarProps) {
+export function ClaimActionBar({ claimId, status, scrubErrors }: ClaimActionBarProps) {
   const [openDialog, setOpenDialog] = useState<DialogType>(null);
+  const [scrubResult, setScrubResult] = useState<ScrubResult | null>(null);
+  const [errorsExpanded, setErrorsExpanded] = useState(false);
+
   const updateStatus = useUpdateClaimStatus(claimId);
+  const scrubMutation = useScrubClaim();
+  const generateMutation = useGenerateEdi();
+
+  // Determine if any EDI file has already been generated
+  const { data: ediFiles } = useEdiFiles(claimId);
+  const ediFileExists = (ediFiles ?? []).length > 0;
 
   const isPending = updateStatus.isPending;
+  const isScrubbing = scrubMutation.isPending;
+  const isGenerating = generateMutation.isPending;
 
   async function transition(toStatus: ClaimStatus, notes?: string) {
     await updateStatus.mutateAsync({ status: toStatus, notes });
     setOpenDialog(null);
+  }
+
+  async function handleScrub() {
+    const result = await scrubMutation.mutateAsync(claimId);
+    setScrubResult(result);
+    // Reset the collapsible error list when a new scrub runs
+    setErrorsExpanded(false);
+  }
+
+  async function handleGenerateEdi() {
+    await generateMutation.mutateAsync({ claimId, isTest: true });
   }
 
   // ─── PAID ────────────────────────────────────────────────────────────────
@@ -134,11 +160,18 @@ export function ClaimActionBar({ claimId, status }: ClaimActionBarProps) {
           <>
             <button
               type="button"
-              onClick={() => transition('SCRUBBED')}
-              disabled={isPending}
+              onClick={handleScrub}
+              disabled={isScrubbing || isPending}
+              aria-busy={isScrubbing}
               className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
             >
-              {isPending ? <span className="flex items-center gap-1.5"><SpinnerIcon /> Saving...</span> : 'Scrub Claim'}
+              {isScrubbing ? (
+                <span className="flex items-center gap-1.5">
+                  <SpinnerIcon /> Scrubbing...
+                </span>
+              ) : (
+                'Scrub Claim'
+              )}
             </button>
             <button
               type="button"
@@ -158,19 +191,42 @@ export function ClaimActionBar({ claimId, status }: ClaimActionBarProps) {
             <button
               type="button"
               onClick={() => setOpenDialog('backToDraft')}
-              disabled={isPending}
+              disabled={isPending || isGenerating}
               className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
             >
               Back to Draft
             </button>
-            <button
-              type="button"
-              onClick={() => setOpenDialog('submit')}
-              disabled={isPending}
-              className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-            >
-              Submit Claim
-            </button>
+            {ediFileExists ? (
+              <button
+                type="button"
+                disabled
+                aria-disabled="true"
+                className="cursor-not-allowed rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white opacity-50"
+              >
+                EDI Generated
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleGenerateEdi}
+                disabled={isGenerating || isPending}
+                aria-busy={isGenerating}
+                className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+              >
+                {isGenerating ? (
+                  <span className="flex items-center gap-1.5">
+                    <SpinnerIcon /> Generating...
+                  </span>
+                ) : (
+                  'Generate EDI'
+                )}
+              </button>
+            )}
+            <SubmitToClearinghouseButton
+              claimId={claimId}
+              ediFileExists={ediFileExists}
+              onSuccess={() => {}}
+            />
           </>
         );
 
@@ -183,7 +239,13 @@ export function ClaimActionBar({ claimId, status }: ClaimActionBarProps) {
               disabled={isPending}
               className="rounded-md border border-teal-600 bg-teal-50 px-3 py-1.5 text-sm font-medium text-teal-700 hover:bg-teal-100 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-600"
             >
-              {isPending ? <span className="flex items-center gap-1.5"><SpinnerIcon /> Saving...</span> : 'Mark Accepted'}
+              {isPending ? (
+                <span className="flex items-center gap-1.5">
+                  <SpinnerIcon /> Saving...
+                </span>
+              ) : (
+                'Mark Accepted'
+              )}
             </button>
             <button
               type="button"
@@ -191,7 +253,13 @@ export function ClaimActionBar({ claimId, status }: ClaimActionBarProps) {
               disabled={isPending}
               className="rounded-md border border-orange-400 bg-orange-50 px-3 py-1.5 text-sm font-medium text-orange-700 hover:bg-orange-100 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-600"
             >
-              {isPending ? <span className="flex items-center gap-1.5"><SpinnerIcon /> Saving...</span> : 'Mark Rejected'}
+              {isPending ? (
+                <span className="flex items-center gap-1.5">
+                  <SpinnerIcon /> Saving...
+                </span>
+              ) : (
+                'Mark Rejected'
+              )}
             </button>
           </>
         );
@@ -211,7 +279,13 @@ export function ClaimActionBar({ claimId, status }: ClaimActionBarProps) {
               disabled={isPending}
               className="rounded-md border border-red-400 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600"
             >
-              {isPending ? <span className="flex items-center gap-1.5"><SpinnerIcon /> Saving...</span> : 'Mark Denied'}
+              {isPending ? (
+                <span className="flex items-center gap-1.5">
+                  <SpinnerIcon /> Saving...
+                </span>
+              ) : (
+                'Mark Denied'
+              )}
             </button>
           </>
         );
@@ -225,7 +299,13 @@ export function ClaimActionBar({ claimId, status }: ClaimActionBarProps) {
               disabled={isPending}
               className="rounded-md border border-blue-600 px-3 py-1.5 text-sm font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
             >
-              {isPending ? <span className="flex items-center gap-1.5"><SpinnerIcon /> Saving...</span> : 'Correct & Resubmit'}
+              {isPending ? (
+                <span className="flex items-center gap-1.5">
+                  <SpinnerIcon /> Saving...
+                </span>
+              ) : (
+                'Correct & Resubmit'
+              )}
             </button>
             <button
               type="button"
@@ -273,7 +353,13 @@ export function ClaimActionBar({ claimId, status }: ClaimActionBarProps) {
               disabled={isPending}
               className="rounded-md border border-red-400 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600"
             >
-              {isPending ? <span className="flex items-center gap-1.5"><SpinnerIcon /> Saving...</span> : 'Mark Denied Again'}
+              {isPending ? (
+                <span className="flex items-center gap-1.5">
+                  <SpinnerIcon /> Saving...
+                </span>
+              ) : (
+                'Mark Denied Again'
+              )}
             </button>
             <button
               type="button"
@@ -294,6 +380,90 @@ export function ClaimActionBar({ claimId, status }: ClaimActionBarProps) {
   // ─── Context banners ──────────────────────────────────────────────────────
 
   function renderContextBanner() {
+    // Live scrub result takes priority over persisted scrubErrors
+    if (scrubResult !== null) {
+      if (scrubResult.passed) {
+        return (
+          <div
+            role="status"
+            aria-live="polite"
+            className="mt-3 flex items-center gap-2 rounded-md border border-teal-200 bg-teal-50 px-4 py-2.5 text-sm text-teal-800"
+          >
+            <svg
+              className="h-4 w-4 flex-shrink-0 text-teal-600"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+              aria-hidden="true"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+            <span>Scrubbed — ready to submit</span>
+          </div>
+        );
+      }
+
+      // Scrub failure — collapsible error list
+      const errorCount = scrubResult.violations.filter((v) => v.severity === 'ERROR').length;
+      const totalCount = scrubResult.violations.length;
+      const displayCount = errorCount > 0 ? errorCount : totalCount;
+      const label = errorCount > 0 ? 'error' : 'issue';
+
+      return (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="mt-3 rounded-md border border-red-200 bg-red-50"
+        >
+          <div className="flex items-center justify-between px-4 py-2.5">
+            <p className="text-sm font-medium text-red-800">
+              Scrub failed — {displayCount} {label}
+              {displayCount !== 1 ? 's' : ''} found
+            </p>
+            <button
+              type="button"
+              onClick={() => setErrorsExpanded((x) => !x)}
+              aria-expanded={errorsExpanded}
+              aria-controls="scrub-error-list"
+              className="text-sm text-red-700 underline hover:text-red-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600"
+            >
+              {errorsExpanded ? 'Hide details' : 'Show details'}
+            </button>
+          </div>
+          {errorsExpanded && (
+            <ul
+              id="scrub-error-list"
+              aria-label="Scrub error details"
+              className="border-t border-red-200 px-4 py-2 space-y-1.5"
+            >
+              {scrubResult.violations.map((v, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-red-800">
+                  <span className="mt-0.5 rounded bg-red-100 px-1.5 py-0.5 font-mono text-xs text-red-800 whitespace-nowrap">
+                    {v.ruleId}
+                  </span>
+                  <span>{v.message}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      );
+    }
+
+    // Prior-session errors from the server (no live scrub result yet)
+    if (status === 'DRAFT' && scrubErrors && scrubErrors.length > 0) {
+      const n = scrubErrors.length;
+      return (
+        <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-2.5">
+          <p className="text-sm text-amber-800">
+            Last scrub found {n} error{n !== 1 ? 's' : ''}. Re-run scrub after correcting the claim
+            data.
+          </p>
+        </div>
+      );
+    }
+
     if (status === 'REJECTED') {
       return (
         <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -302,6 +472,7 @@ export function ClaimActionBar({ claimId, status }: ClaimActionBarProps) {
         </div>
       );
     }
+
     if (status === 'DENIED') {
       return (
         <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
@@ -310,6 +481,7 @@ export function ClaimActionBar({ claimId, status }: ClaimActionBarProps) {
         </div>
       );
     }
+
     return null;
   }
 

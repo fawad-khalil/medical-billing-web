@@ -8,7 +8,12 @@ import { ClaimLinesTable } from '@/components/claims/ClaimLinesTable';
 import { ClaimHistoryTimeline } from '@/components/claims/ClaimHistoryTimeline';
 import { DataField } from '@/components/ui/DataField';
 import { SkeletonRow } from '@/components/ui/SkeletonRow';
+import { EdiPreviewPanel } from '@/components/claims/EdiPreviewPanel';
+import { SubmissionResultPanel } from '@/components/claims/SubmissionResultPanel';
+import { RejectionDetailAlert } from '@/components/claims/RejectionDetailAlert';
+import { TransmissionHistoryPanel } from '@/components/claims/TransmissionHistoryPanel';
 import { useClaim, useClaimHistory } from '@/hooks/useClaims';
+import { useTransmissions } from '@/hooks/useClearinghouse';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -86,6 +91,8 @@ export default function ClaimDetailPage({
   const { id } = use(params);
   const { data: claim, isLoading, isError } = useClaim(id);
   const { data: history = [], isLoading: historyLoading } = useClaimHistory(id);
+  const { data: transmissions = [] } = useTransmissions(id);
+  const latestTransmission = transmissions[0] ?? null;
 
   if (isLoading) {
     return (
@@ -129,8 +136,36 @@ export default function ClaimDetailPage({
 
       {/* Action bar */}
       <div className="mb-6">
-        <ClaimActionBar claimId={claim.id} status={claim.status} />
+        <ClaimActionBar claimId={claim.id} status={claim.status} scrubErrors={claim.scrubErrors} />
       </div>
+
+      {/* EDI preview — only shown once claim has been scrubbed */}
+      {claim.status === 'SCRUBBED' && (
+        <div className="mb-6">
+          <EdiPreviewPanel claimId={claim.id} />
+        </div>
+      )}
+
+      {/* Clearinghouse submission result — shown after submission */}
+      {latestTransmission &&
+        ['SUBMITTED', 'ACCEPTED', 'REJECTED'].includes(claim.status) && (
+          <div className="mb-6">
+            <SubmissionResultPanel transmission={latestTransmission} />
+          </div>
+        )}
+
+      {/* Rejection alert — shown when claim or latest transmission is rejected/errored */}
+      {(claim.status === 'REJECTED' ||
+        latestTransmission?.status === 'REJECTED' ||
+        latestTransmission?.status === 'ERROR') && (
+        <div className="mb-6">
+          <RejectionDetailAlert
+            ackCode={latestTransmission?.ackCode ?? null}
+            ackDescription={latestTransmission?.ackDescription ?? null}
+            errorMessage={latestTransmission?.errorMessage ?? null}
+          />
+        </div>
+      )}
 
       {/* Claim details */}
       <section aria-labelledby="section-details" className="mb-6">
@@ -183,6 +218,19 @@ export default function ClaimDetailPage({
         </h2>
         <ClaimLinesTable lines={claim.claimLines} />
       </section>
+
+      {/* Transmission history — shown when any transmission exists */}
+      {transmissions.length > 0 && (
+        <section aria-labelledby="section-transmissions" className="mb-6">
+          <h2
+            id="section-transmissions"
+            className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500"
+          >
+            Clearinghouse Transmissions
+          </h2>
+          <TransmissionHistoryPanel claimId={claim.id} />
+        </section>
+      )}
 
       {/* Status history timeline */}
       <section aria-labelledby="section-history">

@@ -74,6 +74,7 @@ export interface Claim extends ClaimListItem {
   notes: string | null;
   claimLines: ClaimLine[];
   hasActiveInsurance: boolean;
+  scrubErrors: string[] | null;
 }
 
 // ─── Ready encounter (for new-claim picker) ───────────────────────────────────
